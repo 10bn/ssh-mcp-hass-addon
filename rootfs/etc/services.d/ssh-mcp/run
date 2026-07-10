@@ -46,6 +46,14 @@ fi
 args+=("--transport=http")
 args+=("--httpPort=3000")
 
+# The container always listens on 3000 internally; if the operator remapped it to a
+# different host port via this app's Network tab, tell the server so its startup log
+# prints a URL with the port that's actually reachable, not the internal one.
+public_port="$(bashio::addon.port 3000)"
+if bashio::var.has_value "${public_port}"; then
+  args+=("--publicPort=${public_port}")
+fi
+
 bashio::log.info "Starting SSH MCP Server for $(bashio::config 'user')@$(bashio::config 'host'):$(bashio::config 'port') ..."
 
 cd /app || bashio::exit.nok "Could not change to /app"

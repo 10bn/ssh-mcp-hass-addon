@@ -51,7 +51,7 @@ Full option-by-option reference: [DOCS.md](./DOCS.md).
 | Option          | Description                                                                           |
 | --------------- | -------------------------------------------------------------------------------------- |
 | `host`          | Hostname or IP of the machine to control over SSH. **Required.**                       |
-| `port`          | SSH port of that machine. Default `22`.                                                |
+| `port`          | SSH port of *that machine* (not this app's own port — see below). Default `22`.        |
 | `user`          | SSH username. **Required.**                                                            |
 | `password`      | SSH password. Leave empty if you use a key instead.                                    |
 | `ssh_key_path`  | Path to a private key, **relative to `/config`** (the app mounts it read-write).       |
@@ -67,6 +67,11 @@ The endpoint is a shell-execution API. A secret is always required by default
 your LAN behind something that also enforces authentication (VPN, reverse
 proxy). See [DOCS.md](./DOCS.md#using-an-ssh-key-instead-of-a-password) for
 SSH-key setup.
+
+This app's own MCP port defaults to `3000` and is remapped, if needed, via
+the app's **Network** tab in Home Assistant — not via the `port` option
+above, which is unrelated (that's the *target* machine's SSH port). The
+app's Log tab always shows whichever port is actually reachable.
 
 ## Connecting an MCP client
 

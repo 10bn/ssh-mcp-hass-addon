@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.3
+
+- Fix the startup log always showing the container-internal port (`3000`)
+  even when the app's port was remapped externally via its Network tab. The
+  Home Assistant App now queries the real published port via
+  `bashio::addon.port 3000` and passes it through `--publicPort` so the
+  logged `🔐 No-header MCP URL` (and the general "listening on" line) show
+  the port that's actually reachable. Binding behavior itself (`--httpPort`)
+  is unchanged.
+- Clarify the `port` option's label/description (it's the SSH port of the
+  *target* machine, not this app's own port) to avoid confusion with the
+  above; documented the distinction in `README.md`/`DOCS.md` too.
+
 ## 1.6.2
 
 - Secure the HTTP transport by default, modeled on

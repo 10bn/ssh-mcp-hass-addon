@@ -68,6 +68,13 @@ const MAX_CHARS = (() => {
 //   service (e.g. the Home Assistant add-on), so remote MCP clients can connect over the network.
 const TRANSPORT = (argvConfig.transport || 'stdio').toLowerCase();
 const HTTP_PORT = argvConfig.httpPort ? parseInt(argvConfig.httpPort) : 3000;
+// The container always binds HTTP_PORT internally; that's independent of whatever
+// external/host port a Docker port mapping (e.g. Home Assistant's own "Network" tab
+// for this add-on) publishes it under, which this process has no way to know on its
+// own. --publicPort lets the caller (the add-on's run script, via `bashio::addon.port`)
+// tell it what the externally-reachable port actually is, purely so the log line
+// prints a URL that works — it never affects what HTTP_PORT is bound to.
+const PUBLIC_PORT = argvConfig.publicPort ? parseInt(argvConfig.publicPort) : HTTP_PORT;
 // Auth secret for the HTTP transport (see resolveApiKey() below for how it's derived):
 // - `--apiKey=<value>` pins an explicit, stable secret.
 // - `--secretPathFile=<path>` persists an auto-generated secret across restarts.
@@ -366,7 +373,7 @@ let connectionManager: SSHConnectionManager | null = null;
 function createServer(): McpServer {
   const server = new McpServer({
     name: 'SSH MCP Server',
-    version: '1.6.2',
+    version: '1.6.3',
     capabilities: {
       resources: {},
       tools: {},
@@ -860,9 +867,12 @@ async function startHttpServer(): Promise<import('http').Server> {
 
   return new Promise((resolve, reject) => {
     const httpServer = app.listen(HTTP_PORT, () => {
-      console.error(`SSH MCP Server running on http://0.0.0.0:${HTTP_PORT}/mcp`);
+      console.error(`SSH MCP Server listening on 0.0.0.0:${HTTP_PORT} (container-internal port)`);
+      if (PUBLIC_PORT !== HTTP_PORT) {
+        console.error(`Externally published on port ${PUBLIC_PORT} — use that port in the URLs below.`);
+      }
       if (API_KEY) {
-        console.error(`🔐 No-header MCP URL: http://0.0.0.0:${HTTP_PORT}/private_${API_KEY}`);
+        console.error(`🔐 No-header MCP URL: http://<host>:${PUBLIC_PORT}/private_${API_KEY}`);
         if (!API_KEY_ARG && !SECRET_PATH_FILE) {
           console.error('This secret was freshly generated and is NOT persisted — it will change on every restart. Set --secretPathFile=<path> to persist it, or --apiKey=<value> to pin a fixed one.');
         } else if (!API_KEY_ARG) {

@@ -38,13 +38,17 @@ restarts and updates. After starting the app, open its **Log** tab and look
 for a line like:
 
 ```
-🔐 No-header MCP URL: http://0.0.0.0:3000/private_eS2obRZUylNYYUWgfftrAw
+🔐 No-header MCP URL: http://<host>:3000/private_eS2obRZUylNYYUWgfftrAw
 ```
 
-Copy that URL (with `0.0.0.0` replaced by your Home Assistant host) straight
+Copy that URL (with `<host>` replaced by your Home Assistant host) straight
 into your MCP client — no header configuration needed. Setting `api_key`
 manually instead pins a fixed value of your choosing, e.g. if you want the
 URL to stay predictable across a fresh install.
+
+If you remapped the port on this app's **Network** tab (Settings → this app
+→ Network), the log line already reflects that remapped port automatically —
+always use the port shown in the log, not necessarily `3000`.
 
 ### Using an SSH key instead of a password
 
@@ -67,6 +71,9 @@ or reverse proxy that also enforces authentication), and keep the full
 
 ## Connecting an MCP client
 
+`3000` below is the app's default port — if you remapped it on the app's
+**Network** tab, use that port instead (also shown in the app's Log tab).
+
 There are two equivalent ways to authenticate, depending on what your client
 supports:
 
@@ -75,7 +82,7 @@ bearer token:
 
 ```
 http://<home-assistant-host>:3000/mcp
-Authorization: Bearer <api_key>
+Authorization: Bearer <secret>
 ```
 
 **With a URL only** — no custom header required, the key is embedded in the
@@ -83,13 +90,13 @@ path instead (same idea as Home Assistant's own `/api/webhook/<id>` URLs).
 Use this for clients/tools that only let you paste in a URL:
 
 ```
-http://<home-assistant-host>:3000/private_<api_key>
+http://<home-assistant-host>:3000/private_<secret>
 ```
 
 Anyone who doesn't know the exact secret gets a `404` from this path (it
 doesn't reveal that `/private_` is meaningful), so keep the full URL as
 secret as you would a password. This app always has a secret — either the
-auto-generated one (default) or your pinned `api_key`.
+auto-generated one (default) or your pinned `api_key` value.
 
 For clients that only support the stdio transport (e.g. some Claude Desktop
 setups), use [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) as a
@@ -100,7 +107,7 @@ bridge — either form works:
   "mcpServers": {
     "ssh-mcp": {
       "command": "npx",
-      "args": ["mcp-remote", "http://<home-assistant-host>:3000/private_<api_key>"]
+      "args": ["mcp-remote", "http://<home-assistant-host>:3000/private_<secret>"]
     }
   }
 }

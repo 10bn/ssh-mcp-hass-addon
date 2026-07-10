@@ -3,8 +3,8 @@ configuration:
     name: Host
     description: Hostname or IP address of the remote SSH server to control.
   port:
-    name: Port
-    description: SSH port of the remote server.
+    name: SSH port (target machine)
+    description: SSH port of the remote machine you want to control — NOT this app's own MCP port (that's fixed at 3000 internally; remap it externally via this app's Network tab instead).
   user:
     name: Username
     description: SSH username used to authenticate on the remote server.
