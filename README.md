@@ -39,10 +39,10 @@ itself.
    ```
 2. Find **SSH MCP Server** in the store and install it.
 3. Open the **Configuration** tab and set at least `host`, `user`, and either
-   `password` or `ssh_key_path` for the machine you want to control — plus an
-   `api_key` (strongly recommended, see [Configuration](#configuration)).
-4. Start the app. It listens on `3000/tcp` and exposes a Streamable HTTP MCP
-   endpoint at `POST/GET/DELETE /mcp`.
+   `password` or `ssh_key_path` for the machine you want to control. Leave
+   `api_key` empty — a secret is generated for you automatically.
+4. Start the app, then check its **Log** tab for a `🔐 No-header MCP URL`
+   line — that's your ready-to-use, pre-authenticated endpoint.
 
 Full option-by-option reference: [DOCS.md](./DOCS.md).
 
@@ -60,13 +60,13 @@ Full option-by-option reference: [DOCS.md](./DOCS.md).
 | `disable_sudo`  | Disable the `sudo-exec` tool entirely.                                                  |
 | `timeout`       | Command timeout in milliseconds. Default `60000`.                                       |
 | `max_chars`     | Max characters per command. `none` disables the limit. Default `1000`.                  |
-| `api_key`       | Bearer token required to call the HTTP endpoint. **Strongly recommended.**             |
+| `api_key`       | Optional: pin a fixed secret. Leave empty and one is auto-generated for you — see the app's log after first start. |
 
-The endpoint is a shell-execution API — anyone on your network who can reach the
-Home Assistant host on port `3000` and knows (or lacks) the `api_key` can run
-commands on the target machine. Set `api_key`, and only expose the port beyond
-your LAN behind something that also enforces authentication (VPN, reverse proxy).
-See [DOCS.md](./DOCS.md#using-an-ssh-key-instead-of-a-password) for SSH-key setup.
+The endpoint is a shell-execution API. A secret is always required by default
+(auto-generated if you don't set `api_key`) — only expose the port beyond
+your LAN behind something that also enforces authentication (VPN, reverse
+proxy). See [DOCS.md](./DOCS.md#using-an-ssh-key-instead-of-a-password) for
+SSH-key setup.
 
 ## Connecting an MCP client
 
@@ -76,12 +76,12 @@ Point any Streamable-HTTP-capable MCP client at:
 http://<home-assistant-host>:3000/mcp
 ```
 
-with header `Authorization: Bearer <api_key>` (if configured). If your client
-can't set custom headers, use the URL-only form instead — same secret,
-embedded in the path:
+with header `Authorization: Bearer <secret>`. If your client can't set custom
+headers, use the URL-only form instead — same secret, embedded in the path
+(copy it straight from the app's log, look for `🔐 No-header MCP URL`):
 
 ```
-http://<home-assistant-host>:3000/private_<api_key>
+http://<home-assistant-host>:3000/private_<secret>
 ```
 
 For stdio-only clients (some Claude Desktop setups), bridge with
@@ -92,7 +92,7 @@ For stdio-only clients (some Claude Desktop setups), bridge with
   "mcpServers": {
     "ssh-mcp": {
       "command": "npx",
-      "args": ["mcp-remote", "http://<home-assistant-host>:3000/private_<api_key>"]
+      "args": ["mcp-remote", "http://<home-assistant-host>:3000/private_<secret>"]
     }
   }
 }
@@ -139,7 +139,15 @@ Home Assistant App — are built into the same server:
 
 - `--transport`: `stdio` (default) or `http`
 - `--httpPort`: port for the HTTP endpoint (default `3000`, only with `--transport=http`)
-- `--apiKey`: if set, requests must either send `Authorization: Bearer <apiKey>` on `/mcp`, or hit `/private_<apiKey>` directly (no header needed)
+- `--apiKey=<value>`: pin a fixed secret (otherwise one is auto-generated — see below)
+- `--secretPathFile=<path>`: persist the auto-generated secret here so it survives restarts (the Home Assistant App sets this to a file under its own `/data` directory automatically)
+- `--disableAuth`: explicitly run the HTTP endpoint with no secret at all
+
+In HTTP mode, requests must either send `Authorization: Bearer <secret>` on
+`/mcp`, or hit `/private_<secret>` directly (no header needed). Unless
+`--disableAuth` is passed, a secret always exists: your `--apiKey`, or
+(without one) a freshly generated 128-bit secret printed to the log on
+startup — it changes on every restart unless `--secretPathFile` is set.
 
 ## Tools
 
@@ -173,6 +181,11 @@ sudo/su elevation) originates from the upstream project. This fork adds the
 Streamable HTTP transport and the Home Assistant App packaging on top of it.
 Please direct upstream bugs/features to the original repository, and
 Home-Assistant-packaging-specific issues here.
+
+The auto-generated, no-header `/private_<secret>` authentication scheme is
+modeled on the same approach used by
+[**homeassistant-ai/ha-mcp**](https://github.com/homeassistant-ai/ha-mcp)'s
+Home Assistant App packaging.
 
 ## Disclaimer
 
