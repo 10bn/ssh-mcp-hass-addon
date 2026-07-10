@@ -1,0 +1,44 @@
+# https://developers.home-assistant.io/docs/apps/configuration
+name: SSH MCP Server
+version: "1.6.0"
+slug: ssh_mcp
+description: MCP server that exposes SSH command execution on a remote Linux/Windows host to MCP-compatible AI clients (Claude, Cursor, etc.)
+url: "https://github.com/10bn/ssh-mcp-hass-addon"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - armhf
+init: false
+startup: services
+boot: auto
+map:
+  - config:rw
+ports:
+  3000/tcp: 3000
+ports_description:
+  3000/tcp: MCP Streamable HTTP endpoint (POST/GET/DELETE /mcp)
+options:
+  host: ""
+  port: 22
+  user: ""
+  password: ""
+  ssh_key_path: ""
+  sudo_password: ""
+  su_password: ""
+  disable_sudo: false
+  timeout: 60000
+  max_chars: "1000"
+  api_key: ""
+schema:
+  host: str
+  port: port
+  user: str
+  password: password?
+  ssh_key_path: str?
+  sudo_password: password?
+  su_password: password?
+  disable_sudo: bool
+  timeout: int
+  max_chars: str
+  api_key: password?

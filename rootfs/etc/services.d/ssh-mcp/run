@@ -1,0 +1,48 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# Start the SSH MCP Server
+# s6-overlay docs: https://github.com/just-containers/s6-overlay
+# ==============================================================================
+
+declare -a args
+
+args+=("--host=$(bashio::config 'host')")
+args+=("--port=$(bashio::config 'port')")
+args+=("--user=$(bashio::config 'user')")
+
+if bashio::config.has_value 'password'; then
+  args+=("--password=$(bashio::config 'password')")
+fi
+
+if bashio::config.has_value 'ssh_key_path'; then
+  args+=("--key=/config/$(bashio::config 'ssh_key_path')")
+fi
+
+if bashio::config.has_value 'sudo_password'; then
+  args+=("--sudoPassword=$(bashio::config 'sudo_password')")
+fi
+
+if bashio::config.has_value 'su_password'; then
+  args+=("--suPassword=$(bashio::config 'su_password')")
+fi
+
+if bashio::config.true 'disable_sudo'; then
+  args+=("--disableSudo")
+fi
+
+args+=("--timeout=$(bashio::config 'timeout')")
+args+=("--maxChars=$(bashio::config 'max_chars')")
+
+if bashio::config.has_value 'api_key'; then
+  args+=("--apiKey=$(bashio::config 'api_key')")
+else
+  bashio::log.warning "No api_key set - the MCP HTTP endpoint is unauthenticated on the network. Set the 'api_key' option to secure it."
+fi
+
+args+=("--transport=http")
+args+=("--httpPort=3000")
+
+bashio::log.info "Starting SSH MCP Server for $(bashio::config 'user')@$(bashio::config 'host'):$(bashio::config 'port') ..."
+
+cd /app || bashio::exit.nok "Could not change to /app"
+exec node build/index.js "${args[@]}"

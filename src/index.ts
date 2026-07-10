@@ -5,6 +5,9 @@ import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { Client, ClientChannel } from 'ssh2';
 import { z } from 'zod';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import express from 'express';
+import cors from 'cors';
 
 // Example usage: node build/index.js --host=1.2.3.4 --port=22 --user=root --password=pass --key=path/to/key --timeout=5000 --disableSudo
 function parseArgv() {
@@ -55,6 +58,15 @@ const MAX_CHARS = (() => {
   }
   return 1000;
 })();
+
+// Transport configuration:
+// - `stdio` (default): spawn-and-talk-over-stdio, used by MCP clients like Claude Desktop/Code.
+// - `http`: run a persistent Streamable HTTP MCP endpoint, used when running as a long-lived
+//   service (e.g. the Home Assistant add-on), so remote MCP clients can connect over the network.
+const TRANSPORT = (argvConfig.transport || 'stdio').toLowerCase();
+const HTTP_PORT = argvConfig.httpPort ? parseInt(argvConfig.httpPort) : 3000;
+// Optional bearer token required on the HTTP transport. Without it the endpoint is unauthenticated.
+const API_KEY = argvConfig.apiKey || undefined;
 
 function validateConfig(config: Record<string, string | null>) {
   const errors = [];
@@ -338,16 +350,21 @@ export class SSHConnectionManager {
 
 let connectionManager: SSHConnectionManager | null = null;
 
-const server = new McpServer({
-  name: 'SSH MCP Server',
-  version: '1.5.0',
-  capabilities: {
-    resources: {},
-    tools: {},
-  },
-});
+// Builds a fresh MCP server instance with the exec/sudo-exec tools registered.
+// Used once for the stdio transport, and once per request for the stateless HTTP
+// transport (the underlying SSH connection is still shared via the module-level
+// `connectionManager` singleton above, so multiple HTTP requests reuse one SSH session).
+function createServer(): McpServer {
+  const server = new McpServer({
+    name: 'SSH MCP Server',
+    version: '1.6.0',
+    capabilities: {
+      resources: {},
+      tools: {},
+    },
+  });
 
-server.tool(
+  server.tool(
   "exec",
   "Execute a shell command on the remote SSH server and return the output.",
   {
@@ -494,7 +511,12 @@ if (!DISABLE_SUDO) {
       }
     }
   );
+  }
+
+  return server;
 }
+
+const server = createServer();
 
 // New function that uses persistent connection
 export async function execSshCommandWithConnection(manager: SSHConnectionManager, command: string, stdin?: string): Promise<{ [x: string]: unknown; content: ({ [x: string]: unknown; type: "text"; text: string; } | { [x: string]: unknown; type: "image"; data: string; mimeType: string; } | { [x: string]: unknown; type: "audio"; data: string; mimeType: string; } | { [x: string]: unknown; type: "resource"; resource: any; })[] }> {
@@ -692,10 +714,82 @@ export async function execSshCommand(sshConfig: any, command: string, stdin?: st
   });
 }
 
+// Runs a stateless Streamable HTTP MCP endpoint at POST/GET/DELETE /mcp.
+// A fresh McpServer is created per request (per MCP SDK guidance for stateless mode),
+// but all requests share the same module-level SSH connectionManager, so the remote
+// SSH session persists across MCP client connections just like it does over stdio.
+async function startHttpServer(): Promise<import('http').Server> {
+  const app = express();
+  app.use(express.json());
+  app.use(cors({ origin: '*', exposedHeaders: ['Mcp-Session-Id'] }));
+
+  if (API_KEY) {
+    app.use('/mcp', (req, res, next) => {
+      if (req.headers['authorization'] === `Bearer ${API_KEY}`) {
+        next();
+        return;
+      }
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Unauthorized' },
+        id: null,
+      });
+    });
+  } else {
+    console.error('WARNING: no --apiKey configured; the /mcp HTTP endpoint is unauthenticated.');
+  }
+
+  app.post('/mcp', async (req, res) => {
+    try {
+      const requestServer = createServer();
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      await requestServer.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+      res.on('close', () => {
+        transport.close();
+        requestServer.close();
+      });
+    } catch (error: any) {
+      console.error('Error handling MCP request:', error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null,
+        });
+      }
+    }
+  });
+
+  const methodNotAllowed = (_req: express.Request, res: express.Response) => {
+    res.status(405).json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Method not allowed.' },
+      id: null,
+    });
+  };
+  app.get('/mcp', methodNotAllowed);
+  app.delete('/mcp', methodNotAllowed);
+
+  return new Promise((resolve, reject) => {
+    const httpServer = app.listen(HTTP_PORT, () => {
+      console.error(`SSH MCP Server running on http://0.0.0.0:${HTTP_PORT}/mcp`);
+      resolve(httpServer);
+    });
+    httpServer.on('error', reject);
+  });
+}
+
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("SSH MCP Server running on stdio");
+  let httpServer: import('http').Server | undefined;
+
+  if (TRANSPORT === 'http') {
+    httpServer = await startHttpServer();
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("SSH MCP Server running on stdio");
+  }
 
   // Handle graceful shutdown
   const cleanup = () => {
@@ -703,6 +797,9 @@ async function main() {
     if (connectionManager) {
       connectionManager.close();
       connectionManager = null;
+    }
+    if (httpServer) {
+      httpServer.close();
     }
     process.exit(0);
   };
