@@ -1,0 +1,36 @@
+configuration:
+  host:
+    name: Host
+    description: Hostname or IP address of the remote SSH server to control.
+  port:
+    name: Port
+    description: SSH port of the remote server.
+  user:
+    name: Username
+    description: SSH username used to authenticate on the remote server.
+  password:
+    name: Password
+    description: SSH password. Leave empty when using an SSH key instead (ssh_key_path).
+  ssh_key_path:
+    name: SSH key path
+    description: Path to a private key file, relative to /config, e.g. ssh-mcp/id_rsa.
+  sudo_password:
+    name: Sudo password
+    description: Password used to elevate commands run via the sudo-exec tool.
+  su_password:
+    name: Su password
+    description: Password used to open a persistent root shell via "su -".
+  disable_sudo:
+    name: Disable sudo-exec tool
+    description: Disable the sudo-exec tool entirely, e.g. when sudo access is not available.
+  timeout:
+    name: Command timeout (ms)
+    description: Maximum time in milliseconds a remote command may run before being aborted.
+  max_chars:
+    name: Max command length
+    description: Maximum number of characters allowed in a command. Use "none" to disable the limit.
+  api_key:
+    name: API key
+    description: Bearer token MCP clients must send to use this server. Strongly recommended when exposing the port on your network.
+network:
+  3000/tcp: MCP HTTP endpoint

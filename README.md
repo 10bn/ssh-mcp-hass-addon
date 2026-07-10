@@ -18,6 +18,7 @@
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Installation](#installation)
+- [Home Assistant App](#home-assistant-app)
 - [Client Setup](#client-setup)
 - [Testing](#testing)
 - [Disclaimer](#disclaimer)
@@ -69,13 +70,38 @@
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/tufantunc/ssh-mcp.git
-   cd ssh-mcp
+   git clone https://github.com/10bn/ssh-mcp-hass-addon.git
+   cd ssh-mcp-hass-addon
    ```
 2. **Install dependencies:**
    ```bash
    npm install
    ```
+
+## Home Assistant App
+
+This fork can also run as a persistent [Home Assistant App](https://developers.home-assistant.io/docs/apps/)
+(add-on), exposing itself as a network-reachable MCP endpoint (Streamable
+HTTP) instead of the stdio transport used by the CLI:
+
+1. In Home Assistant, go to **Settings → Add-ons → Add-on store**, open the
+   menu (⋮) → **Repositories**, and add this repository's URL.
+2. Install **SSH MCP Server** from the store and configure the `host`/`user`/
+   `password` (or `ssh_key_path`) and an `api_key` in its options.
+3. Point any MCP client at `http://<home-assistant-host>:3000/mcp` with
+   header `Authorization: Bearer <api_key>`.
+
+See [DOCS.md](./DOCS.md) for the full app configuration reference.
+
+### Transport options (all installations)
+
+By default the server speaks MCP over stdio, as used by Claude Desktop,
+Claude Code, Cursor, etc. It can instead run a persistent Streamable HTTP
+endpoint (used by the Home Assistant app):
+
+- `--transport`: `stdio` (default) or `http`
+- `--httpPort`: port for the HTTP endpoint (default `3000`, only used when `--transport=http`)
+- `--apiKey`: if set, HTTP requests must include `Authorization: Bearer <apiKey>`; if unset, the HTTP endpoint is unauthenticated (a warning is logged)
 
 ## Client Setup
 
