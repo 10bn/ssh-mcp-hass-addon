@@ -8,6 +8,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
 import cors from 'cors';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 // Example usage: node build/index.js --host=1.2.3.4 --port=22 --user=root --password=pass --key=path/to/key --timeout=5000 --disableSudo
 function parseArgv() {
@@ -65,8 +68,14 @@ const MAX_CHARS = (() => {
 //   service (e.g. the Home Assistant add-on), so remote MCP clients can connect over the network.
 const TRANSPORT = (argvConfig.transport || 'stdio').toLowerCase();
 const HTTP_PORT = argvConfig.httpPort ? parseInt(argvConfig.httpPort) : 3000;
-// Optional bearer token required on the HTTP transport. Without it the endpoint is unauthenticated.
-const API_KEY = argvConfig.apiKey || undefined;
+// Auth secret for the HTTP transport (see resolveApiKey() below for how it's derived):
+// - `--apiKey=<value>` pins an explicit, stable secret.
+// - `--secretPathFile=<path>` persists an auto-generated secret across restarts.
+// - `--disableAuth` explicitly opts out of any secret (endpoint is fully open).
+// - with none of the above, a secret is still auto-generated, it just changes on restart.
+const API_KEY_ARG = argvConfig.apiKey || undefined;
+const SECRET_PATH_FILE = argvConfig.secretPathFile || undefined;
+const DISABLE_AUTH = argvConfig.disableAuth !== undefined;
 
 function validateConfig(config: Record<string, string | null>) {
   const errors = [];
@@ -357,7 +366,7 @@ let connectionManager: SSHConnectionManager | null = null;
 function createServer(): McpServer {
   const server = new McpServer({
     name: 'SSH MCP Server',
-    version: '1.6.0',
+    version: '1.6.2',
     capabilities: {
       resources: {},
       tools: {},
@@ -714,32 +723,74 @@ export async function execSshCommand(sshConfig: any, command: string, stdin?: st
   });
 }
 
-// Runs a stateless Streamable HTTP MCP endpoint at POST/GET/DELETE /mcp.
-// A fresh McpServer is created per request (per MCP SDK guidance for stateless mode),
-// but all requests share the same module-level SSH connectionManager, so the remote
-// SSH session persists across MCP client connections just like it does over stdio.
+// Constant-time comparison of a request-supplied token against the configured
+// API_KEY. Guards against timing attacks that could otherwise leak the secret
+// one byte at a time; a plain `===` comparison short-circuits on mismatch.
+function isValidToken(candidate: string, expected: string): boolean {
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// 128 bits of randomness, URL-safe — same size/shape as Python's
+// `secrets.token_urlsafe(16)`, which is what this scheme is modeled on.
+function generateSecret(): string {
+  return crypto.randomBytes(16).toString('base64url');
+}
+
+// Resolves the HTTP transport's shared secret. Priority order:
+// 1. `--apiKey=<value>` — explicit, stable value, always wins.
+// 2. `--disableAuth` — explicit opt-out, no secret at all (old "wide open" behavior).
+// 3. otherwise, a secret is auto-generated so the endpoint is secure by default
+//    (never silently unauthenticated). If `--secretPathFile=<path>` is given, the
+//    generated secret is persisted there and reused on subsequent starts, so the
+//    URL stays stable across restarts; without it, a fresh secret (and URL) is
+//    generated every time the process starts.
+function resolveApiKey(): string | undefined {
+  if (API_KEY_ARG) return API_KEY_ARG;
+  if (DISABLE_AUTH) return undefined;
+
+  if (SECRET_PATH_FILE) {
+    try {
+      const existing = fs.readFileSync(SECRET_PATH_FILE, 'utf8').trim();
+      if (existing.length >= 16) return existing;
+    } catch {
+      // File missing or unreadable — fall through and generate a new one.
+    }
+  }
+
+  const generated = generateSecret();
+
+  if (SECRET_PATH_FILE) {
+    try {
+      fs.mkdirSync(path.dirname(SECRET_PATH_FILE), { recursive: true });
+      fs.writeFileSync(SECRET_PATH_FILE, generated, { mode: 0o600 });
+    } catch (err: any) {
+      console.error(`WARNING: could not persist secret to ${SECRET_PATH_FILE}, it will change on restart: ${err?.message || err}`);
+    }
+  }
+
+  return generated;
+}
+
+// Runs a stateless Streamable HTTP MCP endpoint. A fresh McpServer is created per
+// request (per MCP SDK guidance for stateless mode), but all requests share the
+// same module-level SSH connectionManager, so the remote SSH session persists
+// across MCP client connections just like it does over stdio.
+//
+// Two ways to reach it, both requiring the same secret when one is configured:
+// - POST/GET/DELETE /mcp                  with header `Authorization: Bearer <secret>`
+// - POST/GET/DELETE /private_<secret>     no header needed, the URL itself is the
+//   credential (same idea as Home Assistant's own /api/webhook/<id> URLs) — for
+//   MCP clients that only accept a bare URL and can't set custom headers.
 async function startHttpServer(): Promise<import('http').Server> {
   const app = express();
   app.use(express.json());
   app.use(cors({ origin: '*', exposedHeaders: ['Mcp-Session-Id'] }));
 
-  if (API_KEY) {
-    app.use('/mcp', (req, res, next) => {
-      if (req.headers['authorization'] === `Bearer ${API_KEY}`) {
-        next();
-        return;
-      }
-      res.status(401).json({
-        jsonrpc: '2.0',
-        error: { code: -32001, message: 'Unauthorized' },
-        id: null,
-      });
-    });
-  } else {
-    console.error('WARNING: no --apiKey configured; the /mcp HTTP endpoint is unauthenticated.');
-  }
+  const API_KEY = resolveApiKey();
 
-  app.post('/mcp', async (req, res) => {
+  const handleMcpPost = async (req: express.Request, res: express.Response) => {
     try {
       const requestServer = createServer();
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -759,7 +810,7 @@ async function startHttpServer(): Promise<import('http').Server> {
         });
       }
     }
-  });
+  };
 
   const methodNotAllowed = (_req: express.Request, res: express.Response) => {
     res.status(405).json({
@@ -768,12 +819,56 @@ async function startHttpServer(): Promise<import('http').Server> {
       id: null,
     });
   };
+
+  if (API_KEY) {
+    app.use('/mcp', (req, res, next) => {
+      if (req.headers['authorization'] === `Bearer ${API_KEY}`) {
+        next();
+        return;
+      }
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Unauthorized' },
+        id: null,
+      });
+    });
+  } else {
+    console.error('WARNING: --disableAuth is set; the /mcp HTTP endpoint is unauthenticated and reachable by anyone who can reach this port.');
+  }
+
+  app.post('/mcp', handleMcpPost);
   app.get('/mcp', methodNotAllowed);
   app.delete('/mcp', methodNotAllowed);
+
+  if (API_KEY) {
+    // Matches /private_<anything>; the token is checked (not the route match
+    // itself) so an unknown token gets a generic 404 rather than confirming
+    // that the /private_ prefix is meaningful.
+    const privateRoute = /^\/private_(.+)$/;
+    const checkUrlToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const token = (req.params as any)[0] as string;
+      if (isValidToken(token, API_KEY as string)) {
+        next();
+        return;
+      }
+      res.status(404).end();
+    };
+    app.post(privateRoute, checkUrlToken, handleMcpPost);
+    app.get(privateRoute, checkUrlToken, methodNotAllowed);
+    app.delete(privateRoute, checkUrlToken, methodNotAllowed);
+  }
 
   return new Promise((resolve, reject) => {
     const httpServer = app.listen(HTTP_PORT, () => {
       console.error(`SSH MCP Server running on http://0.0.0.0:${HTTP_PORT}/mcp`);
+      if (API_KEY) {
+        console.error(`🔐 No-header MCP URL: http://0.0.0.0:${HTTP_PORT}/private_${API_KEY}`);
+        if (!API_KEY_ARG && !SECRET_PATH_FILE) {
+          console.error('This secret was freshly generated and is NOT persisted — it will change on every restart. Set --secretPathFile=<path> to persist it, or --apiKey=<value> to pin a fixed one.');
+        } else if (!API_KEY_ARG) {
+          console.error(`Secret persisted at ${SECRET_PATH_FILE} — reused across restarts.`);
+        }
+      }
       resolve(httpServer);
     });
     httpServer.on('error', reject);

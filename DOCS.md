@@ -28,7 +28,23 @@ shell commands on a remote Linux/Windows host over SSH.
 | `disable_sudo`    | Disable the `sudo-exec` tool entirely.                                                  |
 | `timeout`         | Command timeout in milliseconds. Default `60000`.                                       |
 | `max_chars`       | Max characters per command. `none` disables the limit. Default `1000`.                  |
-| `api_key`         | Bearer token required to call the HTTP endpoint. **Strongly recommended**, see below.   |
+| `api_key`         | Optional: pin a fixed secret for the HTTP endpoint. Leave empty — a secret is auto-generated and persisted for you, see below.   |
+
+### Auto-generated secret (recommended: leave `api_key` empty)
+
+If you don't set `api_key`, the app generates a random 128-bit secret on
+first start and persists it in the app's own data directory — it survives
+restarts and updates. After starting the app, open its **Log** tab and look
+for a line like:
+
+```
+🔐 No-header MCP URL: http://0.0.0.0:3000/private_eS2obRZUylNYYUWgfftrAw
+```
+
+Copy that URL (with `0.0.0.0` replaced by your Home Assistant host) straight
+into your MCP client — no header configuration needed. Setting `api_key`
+manually instead pins a fixed value of your choosing, e.g. if you want the
+URL to stay predictable across a fresh install.
 
 ### Using an SSH key instead of a password
 
@@ -44,36 +60,47 @@ ssh_key_path: ssh-mcp/id_rsa
 
 The app listens on TCP port `3000` for anyone who can reach the Home Assistant
 host on your network — this is a shell-execution endpoint, so treat it like
-one. Set `api_key` and configure your MCP client to send it as
-`Authorization: Bearer <api_key>`. Only expose the port beyond your local
-network if you know what you are doing (e.g. behind a VPN or reverse proxy
-that also enforces authentication).
+one. By default a secret is always required (see above); only expose the port
+beyond your local network if you know what you are doing (e.g. behind a VPN
+or reverse proxy that also enforces authentication), and keep the full
+`/private_...` URL — or the `api_key` value — as confidential as a password.
 
 ## Connecting an MCP client
 
-Point any Streamable-HTTP-capable MCP client at:
+There are two equivalent ways to authenticate, depending on what your client
+supports:
+
+**With a header** — point the client at the fixed path and send the key as a
+bearer token:
 
 ```
 http://<home-assistant-host>:3000/mcp
+Authorization: Bearer <api_key>
 ```
 
-with header `Authorization: Bearer <api_key>` (if configured).
+**With a URL only** — no custom header required, the key is embedded in the
+path instead (same idea as Home Assistant's own `/api/webhook/<id>` URLs).
+Use this for clients/tools that only let you paste in a URL:
+
+```
+http://<home-assistant-host>:3000/private_<api_key>
+```
+
+Anyone who doesn't know the exact secret gets a `404` from this path (it
+doesn't reveal that `/private_` is meaningful), so keep the full URL as
+secret as you would a password. This app always has a secret — either the
+auto-generated one (default) or your pinned `api_key`.
 
 For clients that only support the stdio transport (e.g. some Claude Desktop
 setups), use [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) as a
-bridge:
+bridge — either form works:
 
 ```json
 {
   "mcpServers": {
     "ssh-mcp": {
       "command": "npx",
-      "args": [
-        "mcp-remote",
-        "http://<home-assistant-host>:3000/mcp",
-        "--header",
-        "Authorization: Bearer <api_key>"
-      ]
+      "args": ["mcp-remote", "http://<home-assistant-host>:3000/private_<api_key>"]
     }
   }
 }

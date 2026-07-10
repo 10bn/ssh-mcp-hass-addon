@@ -30,7 +30,7 @@ configuration:
     name: Max command length
     description: Maximum number of characters allowed in a command. Use "none" to disable the limit.
   api_key:
-    name: API key
-    description: Bearer token MCP clients must send to use this server. Strongly recommended when exposing the port on your network.
+    name: API key (optional)
+    description: Pin a fixed secret for the MCP endpoint. Leave empty to auto-generate one on first start — check the app's log for the ready-to-use URL.
 network:
   3000/tcp: MCP HTTP endpoint

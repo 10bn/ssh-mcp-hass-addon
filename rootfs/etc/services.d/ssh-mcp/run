@@ -34,9 +34,13 @@ args+=("--timeout=$(bashio::config 'timeout')")
 args+=("--maxChars=$(bashio::config 'max_chars')")
 
 if bashio::config.has_value 'api_key'; then
+  # Operator pinned an explicit secret; use it as-is.
   args+=("--apiKey=$(bashio::config 'api_key')")
 else
-  bashio::log.warning "No api_key set - the MCP HTTP endpoint is unauthenticated on the network. Set the 'api_key' option to secure it."
+  # No pinned secret: auto-generate one (128-bit, URL-safe) and persist it in
+  # /data, which Supervisor always mounts as this app's private persistent
+  # storage — so the secret (and the MCP URL) survives restarts/updates.
+  args+=("--secretPathFile=/data/secret_path.txt")
 fi
 
 args+=("--transport=http")
