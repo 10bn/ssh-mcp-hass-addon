@@ -8,6 +8,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
 import cors from 'cors';
+import crypto from 'crypto';
 
 // Example usage: node build/index.js --host=1.2.3.4 --port=22 --user=root --password=pass --key=path/to/key --timeout=5000 --disableSudo
 function parseArgv() {
@@ -357,7 +358,7 @@ let connectionManager: SSHConnectionManager | null = null;
 function createServer(): McpServer {
   const server = new McpServer({
     name: 'SSH MCP Server',
-    version: '1.6.0',
+    version: '1.6.1',
     capabilities: {
       resources: {},
       tools: {},
@@ -714,32 +715,31 @@ export async function execSshCommand(sshConfig: any, command: string, stdin?: st
   });
 }
 
-// Runs a stateless Streamable HTTP MCP endpoint at POST/GET/DELETE /mcp.
-// A fresh McpServer is created per request (per MCP SDK guidance for stateless mode),
-// but all requests share the same module-level SSH connectionManager, so the remote
-// SSH session persists across MCP client connections just like it does over stdio.
+// Constant-time comparison of a request-supplied token against the configured
+// API_KEY. Guards against timing attacks that could otherwise leak the secret
+// one byte at a time; a plain `===` comparison short-circuits on mismatch.
+function isValidToken(candidate: string, expected: string): boolean {
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Runs a stateless Streamable HTTP MCP endpoint. A fresh McpServer is created per
+// request (per MCP SDK guidance for stateless mode), but all requests share the
+// same module-level SSH connectionManager, so the remote SSH session persists
+// across MCP client connections just like it does over stdio.
+//
+// Two ways to reach it, both requiring the same API_KEY when one is configured:
+// - POST/GET/DELETE /mcp                with header `Authorization: Bearer <API_KEY>`
+// - POST/GET/DELETE /private_<API_KEY>   no header needed, the URL itself is the
+//   credential (same idea as Home Assistant's own /api/webhook/<id> URLs) — for
+//   MCP clients that only accept a bare URL and can't set custom headers.
 async function startHttpServer(): Promise<import('http').Server> {
   const app = express();
   app.use(express.json());
   app.use(cors({ origin: '*', exposedHeaders: ['Mcp-Session-Id'] }));
 
-  if (API_KEY) {
-    app.use('/mcp', (req, res, next) => {
-      if (req.headers['authorization'] === `Bearer ${API_KEY}`) {
-        next();
-        return;
-      }
-      res.status(401).json({
-        jsonrpc: '2.0',
-        error: { code: -32001, message: 'Unauthorized' },
-        id: null,
-      });
-    });
-  } else {
-    console.error('WARNING: no --apiKey configured; the /mcp HTTP endpoint is unauthenticated.');
-  }
-
-  app.post('/mcp', async (req, res) => {
+  const handleMcpPost = async (req: express.Request, res: express.Response) => {
     try {
       const requestServer = createServer();
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -759,7 +759,7 @@ async function startHttpServer(): Promise<import('http').Server> {
         });
       }
     }
-  });
+  };
 
   const methodNotAllowed = (_req: express.Request, res: express.Response) => {
     res.status(405).json({
@@ -768,12 +768,51 @@ async function startHttpServer(): Promise<import('http').Server> {
       id: null,
     });
   };
+
+  if (API_KEY) {
+    app.use('/mcp', (req, res, next) => {
+      if (req.headers['authorization'] === `Bearer ${API_KEY}`) {
+        next();
+        return;
+      }
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Unauthorized' },
+        id: null,
+      });
+    });
+  } else {
+    console.error('WARNING: no --apiKey configured; the /mcp HTTP endpoint is unauthenticated.');
+  }
+
+  app.post('/mcp', handleMcpPost);
   app.get('/mcp', methodNotAllowed);
   app.delete('/mcp', methodNotAllowed);
+
+  if (API_KEY) {
+    // Matches /private_<anything>; the token is checked (not the route match
+    // itself) so an unknown token gets a generic 404 rather than confirming
+    // that the /private_ prefix is meaningful.
+    const privateRoute = /^\/private_(.+)$/;
+    const checkUrlToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const token = (req.params as any)[0] as string;
+      if (isValidToken(token, API_KEY as string)) {
+        next();
+        return;
+      }
+      res.status(404).end();
+    };
+    app.post(privateRoute, checkUrlToken, handleMcpPost);
+    app.get(privateRoute, checkUrlToken, methodNotAllowed);
+    app.delete(privateRoute, checkUrlToken, methodNotAllowed);
+  }
 
   return new Promise((resolve, reject) => {
     const httpServer = app.listen(HTTP_PORT, () => {
       console.error(`SSH MCP Server running on http://0.0.0.0:${HTTP_PORT}/mcp`);
+      if (API_KEY) {
+        console.error(`No-header alternative: http://0.0.0.0:${HTTP_PORT}/private_${API_KEY}`);
+      }
       resolve(httpServer);
     });
     httpServer.on('error', reject);

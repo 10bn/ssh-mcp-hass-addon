@@ -76,26 +76,29 @@ Point any Streamable-HTTP-capable MCP client at:
 http://<home-assistant-host>:3000/mcp
 ```
 
-with header `Authorization: Bearer <api_key>` (if configured).
+with header `Authorization: Bearer <api_key>` (if configured). If your client
+can't set custom headers, use the URL-only form instead — same secret,
+embedded in the path:
+
+```
+http://<home-assistant-host>:3000/private_<api_key>
+```
 
 For stdio-only clients (some Claude Desktop setups), bridge with
-[`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
+[`mcp-remote`](https://www.npmjs.com/package/mcp-remote) (either URL form works):
 
 ```json
 {
   "mcpServers": {
     "ssh-mcp": {
       "command": "npx",
-      "args": [
-        "mcp-remote",
-        "http://<home-assistant-host>:3000/mcp",
-        "--header",
-        "Authorization: Bearer <api_key>"
-      ]
+      "args": ["mcp-remote", "http://<home-assistant-host>:3000/private_<api_key>"]
     }
   }
 }
 ```
+
+See [DOCS.md](./DOCS.md#connecting-an-mcp-client) for details on both forms.
 
 ## Standalone / CLI usage
 
@@ -136,7 +139,7 @@ Home Assistant App — are built into the same server:
 
 - `--transport`: `stdio` (default) or `http`
 - `--httpPort`: port for the HTTP endpoint (default `3000`, only with `--transport=http`)
-- `--apiKey`: if set, HTTP requests must send `Authorization: Bearer <apiKey>`
+- `--apiKey`: if set, requests must either send `Authorization: Bearer <apiKey>` on `/mcp`, or hit `/private_<apiKey>` directly (no header needed)
 
 ## Tools
 

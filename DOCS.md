@@ -28,7 +28,7 @@ shell commands on a remote Linux/Windows host over SSH.
 | `disable_sudo`    | Disable the `sudo-exec` tool entirely.                                                  |
 | `timeout`         | Command timeout in milliseconds. Default `60000`.                                       |
 | `max_chars`       | Max characters per command. `none` disables the limit. Default `1000`.                  |
-| `api_key`         | Bearer token required to call the HTTP endpoint. **Strongly recommended**, see below.   |
+| `api_key`         | Secret required to call the HTTP endpoint, either as a bearer token or embedded in the URL. **Strongly recommended**, see below.   |
 
 ### Using an SSH key instead of a password
 
@@ -51,29 +51,41 @@ that also enforces authentication).
 
 ## Connecting an MCP client
 
-Point any Streamable-HTTP-capable MCP client at:
+There are two equivalent ways to authenticate, depending on what your client
+supports:
+
+**With a header** — point the client at the fixed path and send the key as a
+bearer token:
 
 ```
 http://<home-assistant-host>:3000/mcp
+Authorization: Bearer <api_key>
 ```
 
-with header `Authorization: Bearer <api_key>` (if configured).
+**With a URL only** — no custom header required, the key is embedded in the
+path instead (same idea as Home Assistant's own `/api/webhook/<id>` URLs).
+Use this for clients/tools that only let you paste in a URL:
+
+```
+http://<home-assistant-host>:3000/private_<api_key>
+```
+
+Anyone who doesn't know the exact `<api_key>` gets a `404` from this path (it
+doesn't reveal that `/private_` is meaningful), so keep the full URL as
+secret as you would a password. Both paths require `api_key` to be set; if
+you left it empty, `/mcp` is open to anyone who can reach the port and the
+`/private_...` path is disabled.
 
 For clients that only support the stdio transport (e.g. some Claude Desktop
 setups), use [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) as a
-bridge:
+bridge — either form works:
 
 ```json
 {
   "mcpServers": {
     "ssh-mcp": {
       "command": "npx",
-      "args": [
-        "mcp-remote",
-        "http://<home-assistant-host>:3000/mcp",
-        "--header",
-        "Authorization: Bearer <api_key>"
-      ]
+      "args": ["mcp-remote", "http://<home-assistant-host>:3000/private_<api_key>"]
     }
   }
 }
